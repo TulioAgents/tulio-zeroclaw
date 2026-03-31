@@ -1,4 +1,6 @@
 pub mod log;
+pub mod mission_control;
+pub mod mission_control_client;
 pub mod multi;
 pub mod noop;
 #[cfg(feature = "observability-otel")]
@@ -12,6 +14,8 @@ pub mod verbose;
 pub use self::log::LogObserver;
 #[allow(unused_imports)]
 pub use self::multi::MultiObserver;
+pub use mission_control::MissionControlObserver;
+pub use mission_control_client::MissionControlClient;
 pub use noop::NoopObserver;
 #[cfg(feature = "observability-otel")]
 pub use otel::OtelObserver;
@@ -20,7 +24,7 @@ pub use traits::{Observer, ObserverEvent};
 #[allow(unused_imports)]
 pub use verbose::VerboseObserver;
 
-use crate::config::ObservabilityConfig;
+use crate::config::{MissionControlConfig, ObservabilityConfig};
 
 /// Factory: create the right observer from config
 pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
@@ -65,6 +69,58 @@ pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
             Box::new(NoopObserver)
         }
     }
+}
+
+/// Extended factory that also accepts the Mission Control config.
+///
+/// When `mission_control.enabled = true`, the configured observability backend
+/// and the Mission Control observer run together via [`MultiObserver`] — events
+/// are fanned out to both. The existing backend is never replaced.
+///
+/// Call sites that have access to the full `Config` should use this instead of
+/// [`create_observer`].
+pub fn create_observer_from_config(
+    obs_config: &ObservabilityConfig,
+    mc_config: &MissionControlConfig,
+) -> Box<dyn Observer> {
+    let base = create_observer(obs_config);
+
+    if !mc_config.enabled {
+        return base;
+    }
+
+    if mc_config.instance_id.is_empty() {
+        tracing::warn!(
+            "Mission Control observer: instance_id is empty. \
+             Set INSTANCE_ID env var or mission_control.instance_id in config."
+        );
+    }
+    if mc_config.auth_token.is_empty() {
+        tracing::warn!(
+            "Mission Control observer: auth_token is empty. \
+             Set MISSION_CONTROL_AUTH_TOKEN env var or mission_control.auth_token in config."
+        );
+    }
+    tracing::info!(
+        api_base = %mc_config.api_base,
+        instance_id = %mc_config.instance_id,
+        agent_id = %mc_config.agent_id,
+        "Mission Control observer enabled — fanning out with '{}'",
+        base.name()
+    );
+
+    let mc_observer = MissionControlObserver::new(
+        MissionControlClient::new(
+            mc_config.api_base.clone(),
+            mc_config.auth_token.clone(),
+            mc_config.instance_id.clone(),
+            mc_config.agent_id.clone(),
+        ),
+        mc_config.emit_task_signals,
+        mc_config.emit_heartbeat,
+    );
+
+    Box::new(MultiObserver::new(vec![base, Box::new(mc_observer)]))
 }
 
 #[cfg(test)]
@@ -180,5 +236,59 @@ mod tests {
             ..ObservabilityConfig::default()
         };
         assert_eq!(create_observer(&cfg).name(), "noop");
+    }
+
+    // ── Mission Control factory tests ────────────────────────────
+
+    #[test]
+    fn factory_mc_disabled_returns_base_observer() {
+        // MC disabled → base observer passes through unchanged.
+        let obs_cfg = ObservabilityConfig {
+            backend: "log".into(),
+            ..ObservabilityConfig::default()
+        };
+        let mc_cfg = MissionControlConfig {
+            enabled: false,
+            ..MissionControlConfig::default()
+        };
+        assert_eq!(
+            create_observer_from_config(&obs_cfg, &mc_cfg).name(),
+            "log"
+        );
+    }
+
+    #[tokio::test]
+    async fn factory_mc_enabled_returns_multi() {
+        // MC enabled → MultiObserver wrapping base + MC.
+        let obs_cfg = ObservabilityConfig {
+            backend: "log".into(),
+            ..ObservabilityConfig::default()
+        };
+        let mc_cfg = MissionControlConfig {
+            enabled: true,
+            api_base: "http://127.0.0.1:4010".into(),
+            auth_token: "test-token".into(),
+            instance_id: "test-instance".into(),
+            agent_id: "manager".into(),
+            ..MissionControlConfig::default()
+        };
+        // The combined observer is MultiObserver.
+        assert_eq!(
+            create_observer_from_config(&obs_cfg, &mc_cfg).name(),
+            "multi"
+        );
+    }
+
+    #[test]
+    fn factory_mc_disabled_noop_base_stays_noop() {
+        let obs_cfg = ObservabilityConfig {
+            backend: "none".into(),
+            ..ObservabilityConfig::default()
+        };
+        let mc_cfg = MissionControlConfig::default(); // enabled = false
+        assert_eq!(
+            create_observer_from_config(&obs_cfg, &mc_cfg).name(),
+            "noop"
+        );
     }
 }

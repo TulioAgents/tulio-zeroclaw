@@ -225,6 +225,10 @@ pub struct Config {
     /// Text-to-Speech configuration (`[tts]`).
     #[serde(default)]
     pub tts: TtsConfig,
+
+    /// Mission Control integration configuration (`[mission_control]`).
+    #[serde(default)]
+    pub mission_control: MissionControlConfig,
 }
 
 /// Named provider profile definition compatible with Codex app-server style config.
@@ -2105,6 +2109,91 @@ fn default_runtime_trace_max_entries() -> usize {
     200
 }
 
+// ── Mission Control ───────────────────────────────────────────────
+
+/// Configuration for the Mission Control integration.
+///
+/// When `enabled = true`, ZeroClaw emits lifecycle signals and heartbeats
+/// to a Mission Control API instance, making the agent visible on the dashboard.
+///
+/// Environment variable overrides (matching Mission Control's onboarding spec):
+/// - `MISSION_CONTROL_API_BASE`   → `api_base`
+/// - `MISSION_CONTROL_AUTH_TOKEN` → `auth_token`
+/// - `INSTANCE_ID`                → `instance_id`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MissionControlConfig {
+    /// Enable Mission Control integration. Default: `false` (opt-in).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Base URL of the Mission Control API (e.g. `"http://127.0.0.1:4010"`).
+    #[serde(default = "default_mc_api_base")]
+    pub api_base: String,
+
+    /// Bearer token for authenticating with the Mission Control API.
+    /// Must match `MISSION_CONTROL_AUTH_TOKEN` in the API's `.env`.
+    /// Never logged or exposed via the config API endpoint.
+    #[serde(default)]
+    pub auth_token: String,
+
+    /// Instance identifier — must match the `id` declared in `instances.yaml`.
+    #[serde(default)]
+    pub instance_id: String,
+
+    /// Agent identifier reported in all signals. Must be in the instance's `agents` list.
+    #[serde(default = "default_mc_agent_id")]
+    pub agent_id: String,
+
+    /// Emit `task.status` / `agent.lifecycle` events to `/api/v1/signals/events`.
+    #[serde(default = "default_true")]
+    pub emit_task_signals: bool,
+
+    /// Emit `instance.heartbeat` to `/api/v1/signals/heartbeat` on `HeartbeatTick`.
+    #[serde(default = "default_true")]
+    pub emit_heartbeat: bool,
+
+    /// Fetch the instance Program at session start and prepend it to the system prompt.
+    #[serde(default = "default_true")]
+    pub read_program_on_start: bool,
+
+    /// Poll `/api/v1/agents/<instance_id>/<agent_id>/inbox` for directives. Default: `false`.
+    #[serde(default)]
+    pub poll_inbox: bool,
+
+    /// Interval in seconds between inbox polls. Default: `60`.
+    #[serde(default = "default_mc_poll_interval")]
+    pub poll_inbox_interval_secs: u64,
+}
+
+fn default_mc_api_base() -> String {
+    "http://127.0.0.1:4010".to_string()
+}
+
+fn default_mc_agent_id() -> String {
+    "manager".to_string()
+}
+
+fn default_mc_poll_interval() -> u64 {
+    60
+}
+
+impl Default for MissionControlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_base: default_mc_api_base(),
+            auth_token: String::new(),
+            instance_id: String::new(),
+            agent_id: default_mc_agent_id(),
+            emit_task_signals: true,
+            emit_heartbeat: true,
+            read_program_on_start: true,
+            poll_inbox: false,
+            poll_inbox_interval_secs: default_mc_poll_interval(),
+        }
+    }
+}
+
 // ── Hooks ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -3866,6 +3955,7 @@ impl Default for Config {
             query_classification: QueryClassificationConfig::default(),
             transcription: TranscriptionConfig::default(),
             tts: TtsConfig::default(),
+            mission_control: MissionControlConfig::default(),
         }
     }
 }
@@ -5131,6 +5221,29 @@ impl Config {
         }
 
         set_runtime_proxy_config(self.proxy.clone());
+
+        // Mission Control: MISSION_CONTROL_API_BASE
+        if let Ok(base) = std::env::var("MISSION_CONTROL_API_BASE") {
+            let base = base.trim();
+            if !base.is_empty() {
+                self.mission_control.api_base = base.to_string();
+            }
+        }
+
+        // Mission Control: MISSION_CONTROL_AUTH_TOKEN
+        if let Ok(token) = std::env::var("MISSION_CONTROL_AUTH_TOKEN") {
+            if !token.is_empty() {
+                self.mission_control.auth_token = token;
+            }
+        }
+
+        // Mission Control: INSTANCE_ID
+        if let Ok(id) = std::env::var("INSTANCE_ID") {
+            let id = id.trim();
+            if !id.is_empty() {
+                self.mission_control.instance_id = id.to_string();
+            }
+        }
     }
 
     pub async fn save(&self) -> Result<()> {
@@ -5820,6 +5933,7 @@ default_temperature = 0.7
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
             tts: TtsConfig::default(),
+            mission_control: MissionControlConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -6003,6 +6117,7 @@ tool_dispatcher = "xml"
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
             tts: TtsConfig::default(),
+            mission_control: MissionControlConfig::default(),
         };
 
         config.save().await.unwrap();

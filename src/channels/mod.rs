@@ -3250,7 +3250,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
     }
 
     let observer: Arc<dyn Observer> =
-        Arc::from(observability::create_observer(&config.observability));
+        Arc::from(observability::create_observer_from_config(
+            &config.observability,
+            &config.mission_control,
+        ));
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
