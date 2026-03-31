@@ -372,7 +372,7 @@ impl Tool for DelegateTool {
 impl DelegateTool {
     /// Returns the effective system prompt for a delegate agent.
     /// Explicit `system_prompt` wins; then `workspace_dir` file-loading; then `None`.
-    fn resolve_system_prompt(agent_config: &DelegateAgentConfig) -> Option<String> {
+    pub fn resolve_system_prompt(agent_config: &DelegateAgentConfig) -> Option<String> {
         if let Some(sp) = agent_config.system_prompt.as_ref() {
             return Some(sp.clone());
         }

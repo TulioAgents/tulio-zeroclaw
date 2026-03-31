@@ -109,7 +109,9 @@ async fn handle_socket(
         let mut provider_name = delegate.provider.clone();
         let mut model = delegate.model.clone();
         let temperature = delegate.temperature.unwrap_or(state.temperature);
-        let system_prompt = delegate.system_prompt.clone().unwrap_or_default();
+        // system_prompt wins; fall back to workspace_dir identity files (same logic as DelegateTool)
+        let system_prompt = crate::tools::delegate::DelegateTool::resolve_system_prompt(&delegate)
+            .unwrap_or_default();
         let api_key = delegate.api_key.clone();
 
         // Resolve hint:* model aliases via [[model_routes]]
