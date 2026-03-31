@@ -12,6 +12,7 @@ pub mod qdrant;
 pub mod response_cache;
 pub mod snapshot;
 pub mod sqlite;
+pub mod workspace_identity;
 pub mod traits;
 pub mod vector;
 

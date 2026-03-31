@@ -2825,6 +2825,24 @@ pub async fn run(
     )?);
     tracing::info!(backend = mem.name(), "Memory initialized");
 
+    // ── Workspace identity hydration ──────────────────────────────
+    // When enabled, seeds IDENTITY.md / SOUL.md / AGENTS.md / USER.md / TOOLS.md /
+    // HEARTBEAT.md / BOOTSTRAP.md into Core memory once. The per-message RAG pipeline
+    // then surfaces only the relevant pieces per turn instead of injecting everything
+    // into the system prompt every session.
+    if config.agent.workspace_identity_hydration {
+        match crate::memory::workspace_identity::hydrate_workspace_identity(
+            mem.as_ref(),
+            &config.workspace_dir,
+        )
+        .await
+        {
+            Ok(0) => tracing::debug!("workspace identity: all entries already in memory"),
+            Ok(n) => tracing::info!("workspace identity: hydrated {n} entries"),
+            Err(e) => tracing::warn!("workspace identity hydration failed: {e}"),
+        }
+    }
+
     // ── Peripherals (merge peripheral tools into registry) ─
     if !peripheral_overrides.is_empty() {
         tracing::info!(
@@ -3044,6 +3062,7 @@ pub async fn run(
         bootstrap_max_chars,
         native_tools,
         config.skills.prompt_injection_mode,
+        config.agent.workspace_identity_hydration,
     );
 
     // Append structured tool-use instructions with schemas (only for non-native providers)
@@ -3431,6 +3450,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         bootstrap_max_chars,
         native_tools,
         config.skills.prompt_injection_mode,
+        config.agent.workspace_identity_hydration,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(&tools_registry));
@@ -5548,6 +5568,7 @@ Let me check the result."#;
             None, // no bootstrap_max_chars
             true, // native_tools
             crate::config::SkillsPromptInjectionMode::Full,
+            false, // workspace_identity_hydration
         );
 
         // Must contain zero XML protocol artifacts

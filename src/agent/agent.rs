@@ -385,6 +385,7 @@ impl Agent {
             skills_prompt_mode: self.skills_prompt_mode,
             identity_config: Some(&self.identity_config),
             dispatcher_instructions: &instructions,
+            workspace_identity_hydration: false,
         };
         self.prompt_builder.build(&ctx)
     }

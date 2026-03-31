@@ -17,6 +17,10 @@ pub struct PromptContext<'a> {
     pub skills_prompt_mode: crate::config::SkillsPromptInjectionMode,
     pub identity_config: Option<&'a IdentityConfig>,
     pub dispatcher_instructions: &'a str,
+    /// When true, only IDENTITY.md is injected as a minimal anchor — all other
+    /// workspace files (SOUL.md, AGENTS.md, etc.) have been seeded into Core memory
+    /// and will be surfaced per-message by the RAG pipeline.
+    pub workspace_identity_hydration: bool,
 }
 
 pub trait PromptSection: Send + Sync {
@@ -92,22 +96,33 @@ impl PromptSection for IdentitySection {
             }
         }
 
-        if !has_aieos {
-            prompt.push_str(
-                "The following workspace files define your identity, behavior, and context.\n\n",
-            );
-        }
-        for file in [
-            "AGENTS.md",
-            "SOUL.md",
-            "TOOLS.md",
-            "IDENTITY.md",
-            "USER.md",
-            "HEARTBEAT.md",
-            "BOOTSTRAP.md",
-            "MEMORY.md",
-        ] {
-            inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
+        if ctx.workspace_identity_hydration {
+            // Hydration mode: all identity files are in Core memory and will be
+            // surfaced by the RAG pipeline per message. Only inject IDENTITY.md as
+            // a minimal anchor so the model always knows who it is.
+            if !has_aieos {
+                prompt.push_str("Your role context, team topology, and operating rules are stored in memory and will be recalled automatically when relevant.\n\n");
+                inject_workspace_file(&mut prompt, ctx.workspace_dir, "IDENTITY.md");
+            }
+        } else {
+            // Classic mode: inject all workspace files verbatim.
+            if !has_aieos {
+                prompt.push_str(
+                    "The following workspace files define your identity, behavior, and context.\n\n",
+                );
+            }
+            for file in [
+                "AGENTS.md",
+                "SOUL.md",
+                "TOOLS.md",
+                "IDENTITY.md",
+                "USER.md",
+                "HEARTBEAT.md",
+                "BOOTSTRAP.md",
+                "MEMORY.md",
+            ] {
+                inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
+            }
         }
 
         Ok(prompt)
@@ -206,7 +221,7 @@ impl PromptSection for DateTimeSection {
     }
 }
 
-fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &str) {
+pub(crate) fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &str) {
     let path = workspace_dir.join(filename);
     match std::fs::read_to_string(&path) {
         Ok(content) => {

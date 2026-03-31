@@ -3,6 +3,7 @@ import type {
   ToolSpec,
   CronJob,
   Integration,
+  AgentEntry,
   DiagResult,
   MemoryEntry,
   CostSummary,
@@ -172,6 +173,16 @@ export function deleteCronJob(id: string): Promise<void> {
   return apiFetch<void>(`/api/cron/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
+}
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+export function getAgents(): Promise<AgentEntry[]> {
+  return apiFetch<AgentEntry[] | { agents: AgentEntry[] }>('/api/agents').then((data) =>
+    unwrapField(data, 'agents'),
+  );
 }
 
 // ---------------------------------------------------------------------------

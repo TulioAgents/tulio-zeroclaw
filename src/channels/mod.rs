@@ -2423,6 +2423,7 @@ pub fn build_system_prompt(
         bootstrap_max_chars,
         false,
         crate::config::SkillsPromptInjectionMode::Full,
+        false,
     )
 }
 
@@ -2435,6 +2436,7 @@ pub fn build_system_prompt_with_mode(
     bootstrap_max_chars: Option<usize>,
     native_tools: bool,
     skills_prompt_mode: crate::config::SkillsPromptInjectionMode,
+    workspace_identity_hydration: bool,
 ) -> String {
     use std::fmt::Write;
     let mut prompt = String::with_capacity(8192);
@@ -2517,10 +2519,16 @@ pub fn build_system_prompt_with_mode(
     // ── 5. Bootstrap files (injected into context) ──────────────
     prompt.push_str("## Project Context\n\n");
 
-    // Check if AIEOS identity is configured
-    if let Some(config) = identity_config {
+    // ── 5. Identity / Bootstrap files ───────────────────────────
+    if workspace_identity_hydration {
+        // Hydration mode: identity files are in Core memory — RAG surfaces them
+        // per message. Only inject IDENTITY.md as a minimal anchor so the model
+        // always knows who it is, regardless of query relevance.
+        let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
+        prompt.push_str("Your role context, team topology, and operating rules are stored in memory and will be recalled automatically when relevant.\n\n");
+        inject_workspace_file(&mut prompt, workspace_dir, "IDENTITY.md", max_chars);
+    } else if let Some(config) = identity_config {
         if identity::is_aieos_configured(config) {
-            // Load AIEOS identity
             match identity::load_aieos_identity(config, workspace_dir) {
                 Ok(Some(aieos_identity)) => {
                     let aieos_prompt = identity::aieos_to_system_prompt(&aieos_identity);
@@ -2530,13 +2538,10 @@ pub fn build_system_prompt_with_mode(
                     }
                 }
                 Ok(None) => {
-                    // No AIEOS identity loaded (shouldn't happen if is_aieos_configured returned true)
-                    // Fall back to OpenClaw bootstrap files
                     let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
                     load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
                 }
                 Err(e) => {
-                    // Log error but don't fail - fall back to OpenClaw
                     eprintln!(
                         "Warning: Failed to load AIEOS identity: {e}. Using OpenClaw format."
                     );
@@ -2545,12 +2550,10 @@ pub fn build_system_prompt_with_mode(
                 }
             }
         } else {
-            // OpenClaw format
             let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
             load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
         }
     } else {
-        // No identity config - use OpenClaw format
         let max_chars = bootstrap_max_chars.unwrap_or(BOOTSTRAP_MAX_CHARS);
         load_openclaw_bootstrap_files(&mut prompt, workspace_dir, max_chars);
     }
@@ -3374,6 +3377,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         bootstrap_max_chars,
         native_tools,
         config.skills.prompt_injection_mode,
+        config.agent.workspace_identity_hydration,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(tools_registry.as_ref()));
@@ -5698,6 +5702,7 @@ BTC is currently around $65,000 based on latest tool output."#
             None,
             false,
             crate::config::SkillsPromptInjectionMode::Compact,
+            false,
         );
 
         assert!(prompt.contains("<available_skills>"), "missing skills XML");

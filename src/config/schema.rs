@@ -269,6 +269,13 @@ pub struct DelegateAgentConfig {
     /// Optional system prompt for the sub-agent
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Optional workspace directory for the sub-agent.
+    /// When set and `system_prompt` is None, identity files (AGENTS.md, SOUL.md,
+    /// IDENTITY.md, etc.) are loaded from this directory at execution time —
+    /// the same way the root agent loads its identity. Supports `~` expansion.
+    /// `system_prompt` takes precedence if both are set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_dir: Option<std::path::PathBuf>,
     /// Optional API key override
     #[serde(default)]
     pub api_key: Option<String>,
@@ -608,6 +615,14 @@ pub struct AgentConfig {
     /// Tool dispatch strategy (e.g. `"auto"`). Default: `"auto"`.
     #[serde(default = "default_agent_tool_dispatcher")]
     pub tool_dispatcher: String,
+    /// When true, workspace identity files (IDENTITY.md, SOUL.md, AGENTS.md, USER.md,
+    /// TOOLS.md, HEARTBEAT.md, BOOTSTRAP.md) are stored as Core memory entries at session
+    /// start instead of being injected verbatim into the system prompt. The per-message
+    /// memory RAG pipeline then surfaces only the relevant pieces per turn, saving tokens.
+    /// IDENTITY.md is always injected as a minimal anchor regardless of this setting.
+    /// Default: false.
+    #[serde(default)]
+    pub workspace_identity_hydration: bool,
 }
 
 fn default_agent_max_tool_iterations() -> usize {
@@ -630,6 +645,7 @@ impl Default for AgentConfig {
             max_history_messages: default_agent_max_history_messages(),
             parallel_tools: false,
             tool_dispatcher: default_agent_tool_dispatcher(),
+            workspace_identity_hydration: false,
         }
     }
 }

@@ -42,6 +42,18 @@ export interface CronJob {
   enabled: boolean;
 }
 
+export interface AgentEntry {
+  id: string;
+  provider: string;
+  model: string;
+  agentic: boolean;
+  max_depth: number;
+  max_iterations: number;
+  allowed_tools: string[];
+  workspace_dir: string | null;
+  has_system_prompt: boolean;
+}
+
 export interface Integration {
   name: string;
   description: string;

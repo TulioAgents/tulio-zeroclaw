@@ -303,6 +303,37 @@ pub async fn handle_api_cron_delete(
     }
 }
 
+/// GET /api/agents — list configured delegate agents
+pub async fn handle_api_agents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let config = state.config.lock().clone();
+    let agents: Vec<serde_json::Value> = config
+        .agents
+        .iter()
+        .map(|(id, agent)| {
+            serde_json::json!({
+                "id": id,
+                "provider": agent.provider,
+                "model": agent.model,
+                "agentic": agent.agentic,
+                "max_depth": agent.max_depth,
+                "max_iterations": agent.max_iterations,
+                "allowed_tools": agent.allowed_tools,
+                "workspace_dir": agent.workspace_dir.as_ref().map(|p| p.to_string_lossy()),
+                "has_system_prompt": agent.system_prompt.is_some(),
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({"agents": agents})).into_response()
+}
+
 /// GET /api/integrations — list all integrations with status
 pub async fn handle_api_integrations(
     State(state): State<AppState>,

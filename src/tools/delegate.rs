@@ -35,6 +35,35 @@ pub struct DelegateTool {
     multimodal_config: crate::config::MultimodalConfig,
 }
 
+/// Build a system prompt by reading identity files from a workspace directory.
+/// Reuses the same file list and injection logic as the root agent's IdentitySection.
+/// Returns `None` if no files were found or all were empty.
+fn system_prompt_from_workspace(workspace_dir: &std::path::Path) -> Option<String> {
+    let mut prompt = String::new();
+    prompt.push_str(
+        "The following workspace files define your identity, behavior, and context.\n\n",
+    );
+    for file in [
+        "AGENTS.md",
+        "SOUL.md",
+        "TOOLS.md",
+        "IDENTITY.md",
+        "USER.md",
+        "HEARTBEAT.md",
+        "BOOTSTRAP.md",
+        "MEMORY.md",
+    ] {
+        crate::agent::prompt::inject_workspace_file(&mut prompt, workspace_dir, file);
+    }
+    // Only return Some if at least one file was successfully injected.
+    // A successfully injected file produces a "### <filename>" header line.
+    if prompt.lines().any(|l| l.starts_with("### ")) {
+        Some(prompt)
+    } else {
+        None
+    }
+}
+
 impl DelegateTool {
     pub fn new(
         agents: HashMap<String, DelegateAgentConfig>,
@@ -289,10 +318,11 @@ impl Tool for DelegateTool {
         }
 
         // Wrap the provider call in a timeout to prevent indefinite blocking
+        let effective_prompt = DelegateTool::resolve_system_prompt(agent_config);
         let result = tokio::time::timeout(
             Duration::from_secs(DELEGATE_TIMEOUT_SECS),
             provider.chat_with_system(
-                agent_config.system_prompt.as_deref(),
+                effective_prompt.as_deref(),
                 &full_prompt,
                 &agent_config.model,
                 temperature,
@@ -340,6 +370,19 @@ impl Tool for DelegateTool {
 }
 
 impl DelegateTool {
+    /// Returns the effective system prompt for a delegate agent.
+    /// Explicit `system_prompt` wins; then `workspace_dir` file-loading; then `None`.
+    fn resolve_system_prompt(agent_config: &DelegateAgentConfig) -> Option<String> {
+        if let Some(sp) = agent_config.system_prompt.as_ref() {
+            return Some(sp.clone());
+        }
+        if let Some(raw_dir) = agent_config.workspace_dir.as_ref() {
+            let expanded = shellexpand::tilde(&raw_dir.to_string_lossy()).to_string();
+            return system_prompt_from_workspace(std::path::Path::new(&expanded));
+        }
+        None
+    }
+
     async fn execute_agentic(
         &self,
         agent_name: &str,
@@ -385,8 +428,8 @@ impl DelegateTool {
         }
 
         let mut history = Vec::new();
-        if let Some(system_prompt) = agent_config.system_prompt.as_ref() {
-            history.push(ChatMessage::system(system_prompt.clone()));
+        if let Some(system_prompt) = DelegateTool::resolve_system_prompt(agent_config) {
+            history.push(ChatMessage::system(system_prompt));
         }
         history.push(ChatMessage::user(full_prompt.to_string()));
 

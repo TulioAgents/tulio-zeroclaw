@@ -14,6 +14,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.agent': 'Agent',
     'nav.tools': 'Tools',
     'nav.cron': 'Scheduled Jobs',
+    'nav.agents': 'Agents',
     'nav.integrations': 'Integrations',
     'nav.memory': 'Memory',
     'nav.config': 'Configuration',
@@ -74,6 +75,17 @@ const translations: Record<Locale, Record<string, string>> = {
     'cron.enabled': 'Enabled',
     'cron.empty': 'No scheduled jobs.',
     'cron.confirm_delete': 'Are you sure you want to delete this job?',
+
+    // Agents
+    'agents.title': 'Agents',
+    'agents.empty': 'No agents configured.',
+    'agents.provider': 'Provider',
+    'agents.model': 'Model',
+    'agents.tools': 'Tools',
+    'agents.agentic': 'Agentic',
+    'agents.max_depth': 'Max Depth',
+    'agents.max_iterations': 'Max Iterations',
+    'agents.system_prompt': 'System Prompt',
 
     // Integrations
     'integrations.title': 'Integrations',
@@ -197,6 +209,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.agent': 'Ajan',
     'nav.tools': 'Araclar',
     'nav.cron': 'Zamanlanmis Gorevler',
+    'nav.agents': 'Ajanlar',
     'nav.integrations': 'Entegrasyonlar',
     'nav.memory': 'Hafiza',
     'nav.config': 'Yapilandirma',
@@ -257,6 +270,17 @@ const translations: Record<Locale, Record<string, string>> = {
     'cron.enabled': 'Etkin',
     'cron.empty': 'Zamanlanmis gorev yok.',
     'cron.confirm_delete': 'Bu gorevi silmek istediginizden emin misiniz?',
+
+    // Agents
+    'agents.title': 'Ajanlar',
+    'agents.empty': 'Yapilandirilmis ajan yok.',
+    'agents.provider': 'Saglayici',
+    'agents.model': 'Model',
+    'agents.tools': 'Araclar',
+    'agents.agentic': 'Ajansal',
+    'agents.max_depth': 'Maks Derinlik',
+    'agents.max_iterations': 'Maks Iterasyon',
+    'agents.system_prompt': 'Sistem Istemi',
 
     // Integrations
     'integrations.title': 'Entegrasyonlar',
