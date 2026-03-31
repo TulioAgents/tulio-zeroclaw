@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
-import type { WsMessage } from '@/types/api';
+import type { AgentEntry, WsMessage } from '@/types/api';
 import { WebSocketClient } from '@/lib/ws';
+import { getAgents } from '@/lib/api';
 
 interface ChatMessage {
   id: string;
@@ -10,12 +11,18 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-export default function AgentChat() {
+interface AgentChatProps {
+  /** Delegate agent ID from route param. Undefined = default gateway agent. */
+  agentId?: string;
+}
+
+export default function AgentChat({ agentId }: AgentChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [agent, setAgent] = useState<AgentEntry | null>(null);
 
   const wsRef = useRef<WebSocketClient | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -23,8 +30,30 @@ export default function AgentChat() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const pendingContentRef = useRef('');
 
+  // Load agent metadata so we can display name/emoji in the header
   useEffect(() => {
-    const ws = new WebSocketClient();
+    if (!agentId) {
+      setAgent(null);
+      return;
+    }
+    getAgents()
+      .then((agents) => {
+        const found = agents.find((a) => a.id === agentId) ?? null;
+        setAgent(found);
+      })
+      .catch(() => {
+        // Non-critical — just won't show the name
+      });
+  }, [agentId]);
+
+  // Reset messages and reconnect whenever the target agent changes
+  useEffect(() => {
+    setMessages([]);
+    pendingContentRef.current = '';
+    setTyping(false);
+    setError(null);
+
+    const ws = new WebSocketClient({ agentId });
 
     ws.onOpen = () => {
       setConnected(true);
@@ -111,7 +140,7 @@ export default function AgentChat() {
     return () => {
       ws.disconnect();
     };
-  }, []);
+  }, [agentId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -166,9 +195,32 @@ export default function AgentChat() {
     });
   }, []);
 
+  // Header display
+  const agentLabel = agent?.name ?? agentId ?? 'ZeroClaw Agent';
+  const agentEmoji = agent?.emoji;
+
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
-      {/* Connection status bar */}
+      {/* Agent identity header */}
+      <div className="px-4 py-3 border-b border-gray-800 bg-gray-900 flex items-center gap-3">
+        <div className="flex-shrink-0 w-9 h-9 rounded-full bg-gray-700 flex items-center justify-center text-lg">
+          {agentEmoji ? (
+            <span>{agentEmoji}</span>
+          ) : (
+            <Bot className="h-5 w-5 text-white" />
+          )}
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-white">{agentLabel}</p>
+          {agent && (
+            <p className="text-xs text-gray-500">
+              {agent.provider} · {agent.model}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Connection error bar */}
       {error && (
         <div className="px-4 py-2 bg-red-900/30 border-b border-red-700 flex items-center gap-2 text-sm text-red-300">
           <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -180,8 +232,10 @@ export default function AgentChat() {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
-            <Bot className="h-12 w-12 mb-3 text-gray-600" />
-            <p className="text-lg font-medium">ZeroClaw Agent</p>
+            <div className="text-4xl mb-3">
+              {agentEmoji ?? <Bot className="h-12 w-12 text-gray-600" />}
+            </div>
+            <p className="text-lg font-medium">{agentLabel}</p>
             <p className="text-sm mt-1">Send a message to start the conversation</p>
           </div>
         )}
@@ -195,13 +249,13 @@ export default function AgentChat() {
           >
             <div
               className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                msg.role === 'user'
-                  ? 'bg-blue-600'
-                  : 'bg-gray-700'
+                msg.role === 'user' ? 'bg-blue-600' : 'bg-gray-700'
               }`}
             >
               {msg.role === 'user' ? (
                 <User className="h-4 w-4 text-white" />
+              ) : agentEmoji ? (
+                <span className="text-sm">{agentEmoji}</span>
               ) : (
                 <Bot className="h-4 w-4 text-white" />
               )}
@@ -241,7 +295,11 @@ export default function AgentChat() {
         {typing && (
           <div className="flex items-start gap-3">
             <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center">
-              <Bot className="h-4 w-4 text-white" />
+              {agentEmoji ? (
+                <span className="text-sm">{agentEmoji}</span>
+              ) : (
+                <Bot className="h-4 w-4 text-white" />
+              )}
             </div>
             <div className="bg-gray-800 border border-gray-700 rounded-xl px-4 py-3">
               <div className="flex items-center gap-1">

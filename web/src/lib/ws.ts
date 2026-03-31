@@ -15,6 +15,8 @@ export interface WebSocketClientOptions {
   maxReconnectDelay?: number;
   /** Set to false to disable auto-reconnect. Default true. */
   autoReconnect?: boolean;
+  /** Optional delegate agent ID — routes the session to a specific configured agent. */
+  agentId?: string;
 }
 
 const DEFAULT_RECONNECT_DELAY = 1000;
@@ -47,6 +49,7 @@ export class WebSocketClient {
   private readonly reconnectDelay: number;
   private readonly maxReconnectDelay: number;
   private readonly autoReconnect: boolean;
+  private readonly agentId: string | undefined;
 
   constructor(options: WebSocketClientOptions = {}) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -55,6 +58,7 @@ export class WebSocketClient {
     this.reconnectDelay = options.reconnectDelay ?? DEFAULT_RECONNECT_DELAY;
     this.maxReconnectDelay = options.maxReconnectDelay ?? MAX_RECONNECT_DELAY;
     this.autoReconnect = options.autoReconnect ?? true;
+    this.agentId = options.agentId;
     this.currentDelay = this.reconnectDelay;
   }
 
@@ -68,6 +72,7 @@ export class WebSocketClient {
     const params = new URLSearchParams();
     if (token) params.set('token', token);
     params.set('session_id', sessionId);
+    if (this.agentId) params.set('agent_id', this.agentId);
     const url = `${this.baseUrl}/ws/chat?${params.toString()}`;
 
     this.ws = new WebSocket(url, ['zeroclaw.v1']);

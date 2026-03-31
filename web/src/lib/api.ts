@@ -4,6 +4,7 @@ import type {
   CronJob,
   Integration,
   AgentEntry,
+  KanbanBoard,
   DiagResult,
   MemoryEntry,
   CostSummary,
@@ -173,6 +174,14 @@ export function deleteCronJob(id: string): Promise<void> {
   return apiFetch<void>(`/api/cron/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
+}
+
+// ---------------------------------------------------------------------------
+// Kanban
+// ---------------------------------------------------------------------------
+
+export function getKanban(): Promise<KanbanBoard> {
+  return apiFetch<KanbanBoard>('/api/kanban');
 }
 
 // ---------------------------------------------------------------------------

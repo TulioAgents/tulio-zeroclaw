@@ -303,6 +303,42 @@ pub async fn handle_api_cron_delete(
     }
 }
 
+/// Extract the `name:` and `emoji:` fields from YAML frontmatter at the top of a
+/// system prompt string.  Returns `(name, emoji)` — either or both may be `None`.
+///
+/// Expected format (same as used by the cto-basic config):
+/// ```text
+/// ---
+/// name: Display Name
+/// emoji: "🦉"
+/// ---
+/// …rest of prompt…
+/// ```
+fn parse_agent_frontmatter(prompt: &str) -> (Option<String>, Option<String>) {
+    let trimmed = prompt.trim_start();
+    if !trimmed.starts_with("---") {
+        return (None, None);
+    }
+    // Find closing ---
+    let rest = &trimmed[3..];
+    let end = rest.find("\n---").unwrap_or(rest.find("\r\n---").unwrap_or(0));
+    if end == 0 {
+        return (None, None);
+    }
+    let front = &rest[..end];
+
+    let mut name: Option<String> = None;
+    let mut emoji: Option<String> = None;
+    for line in front.lines() {
+        if let Some(v) = line.strip_prefix("name:") {
+            name = Some(v.trim().trim_matches('"').to_string());
+        } else if let Some(v) = line.strip_prefix("emoji:") {
+            emoji = Some(v.trim().trim_matches('"').to_string());
+        }
+    }
+    (name, emoji)
+}
+
 /// GET /api/agents — list configured delegate agents
 pub async fn handle_api_agents(
     State(state): State<AppState>,
@@ -317,8 +353,15 @@ pub async fn handle_api_agents(
         .agents
         .iter()
         .map(|(id, agent)| {
+            let (name, emoji) = agent
+                .system_prompt
+                .as_deref()
+                .map(parse_agent_frontmatter)
+                .unwrap_or((None, None));
             serde_json::json!({
                 "id": id,
+                "name": name,
+                "emoji": emoji,
                 "provider": agent.provider,
                 "model": agent.model,
                 "agentic": agent.agentic,
@@ -332,6 +375,241 @@ pub async fn handle_api_agents(
         .collect();
 
     Json(serde_json::json!({"agents": agents})).into_response()
+}
+
+/// GET /api/kanban — parse project-map.yaml + openspec tasks and return kanban board data
+pub async fn handle_api_kanban(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    // Map human-readable owner names → agent ids
+    fn owner_to_agent_id(owner: &str) -> Option<&'static str> {
+        let lower = owner.to_lowercase();
+        if lower.contains("cto") || lower.contains("guaripolo") {
+            Some("cto")
+        } else if lower.contains("dev team manager") || lower.contains("dev-team-manager") || lower.contains("team manager") {
+            Some("manager")
+        } else if lower.contains("product owner") || lower.contains("product-owner") {
+            Some("po")
+        } else if lower.contains("tech lead") || lower.contains("tech-lead") || lower.contains("technical lead") {
+            Some("tech-lead")
+        } else if lower.contains("staff fullstack") || lower.contains("staff-fullstack") || lower.contains("staff full") {
+            Some("staff-fullstack")
+        } else if lower.contains("sr. fullstack") || lower.contains("sr fullstack") || lower.contains("sr-fullstack") || lower.contains("senior fullstack") {
+            Some("sr-fullstack")
+        } else if lower.contains("mobile") || lower.contains("flutter") {
+            Some("mobile")
+        } else if lower.contains("qa") || lower.contains("quality") {
+            Some("qa")
+        } else if lower.contains("devops") || lower.contains("dev ops") || lower.contains("gcp") {
+            Some("devops")
+        } else {
+            None
+        }
+    }
+
+    // Parse a tasks.md table row: | ID | Task | Owner | Status |
+    fn parse_tasks_table(content: &str, project: &str, change_id: &str, archived: bool) -> Vec<serde_json::Value> {
+        let mut tasks = Vec::new();
+        let mut in_table = false;
+        let mut header_passed = false;
+
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.starts_with('|') {
+                if in_table { break; }
+                continue;
+            }
+            if !in_table { in_table = true; }
+
+            // skip separator row
+            if line.contains("---") { header_passed = true; continue; }
+            if !header_passed { continue; }
+
+            let cols: Vec<&str> = line.split('|').map(|c| c.trim()).filter(|c| !c.is_empty()).collect();
+            if cols.len() < 3 { continue; }
+
+            let (task_id, title, owner, status_raw) = if cols.len() >= 4 {
+                (cols[0].to_string(), cols[1].to_string(), cols[2].to_string(), cols[3].to_string())
+            } else {
+                (String::new(), cols[0].to_string(), cols[1].to_string(), cols[2].to_string())
+            };
+
+            if title.eq_ignore_ascii_case("task") { continue; } // header row
+
+            let status = if archived {
+                "done"
+            } else {
+                let s = status_raw.to_lowercase();
+                if s.contains("done") || s.contains("complete") || s.contains("✓") {
+                    "done"
+                } else if s.contains("progress") || s.contains("active") || s.contains("wip") {
+                    "in_progress"
+                } else {
+                    "todo"
+                }
+            };
+
+            let agent_id = owner_to_agent_id(&owner).unwrap_or("unknown");
+
+            tasks.push(serde_json::json!({
+                "id": if task_id.is_empty() { uuid::Uuid::new_v4().to_string() } else { task_id },
+                "title": title,
+                "owner": owner,
+                "agent_id": agent_id,
+                "status": status,
+                "project": project,
+                "change_id": change_id,
+                "archived": archived,
+            }));
+        }
+
+        // Also parse checkbox list format: - [ ] / - [x]
+        if tasks.is_empty() {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                let (checked, rest) = if let Some(r) = trimmed.strip_prefix("- [x]").or_else(|| trimmed.strip_prefix("- [X]")) {
+                    (true, r.trim())
+                } else if let Some(r) = trimmed.strip_prefix("- [ ]") {
+                    (false, r.trim())
+                } else {
+                    continue;
+                };
+
+                // Try to extract owner from "task (Owner)" or "Assign to: Owner" patterns
+                let (title, owner) = if let Some(idx) = rest.rfind('(') {
+                    let owner_part = &rest[idx+1..rest.rfind(')').unwrap_or(rest.len())];
+                    (rest[..idx].trim().to_string(), owner_part.to_string())
+                } else {
+                    (rest.to_string(), String::new())
+                };
+
+                let status = if archived || checked { "done" } else { "todo" };
+                let agent_id = if owner.is_empty() { "unknown" } else { owner_to_agent_id(&owner).unwrap_or("unknown") };
+
+                tasks.push(serde_json::json!({
+                    "id": uuid::Uuid::new_v4().to_string(),
+                    "title": title,
+                    "owner": owner,
+                    "agent_id": agent_id,
+                    "status": status,
+                    "project": project,
+                    "change_id": change_id,
+                    "archived": archived,
+                }));
+            }
+        }
+
+        tasks
+    }
+
+    // Parse project-map.yaml (simple line-by-line, no yaml dep)
+    fn parse_project_map(content: &str) -> Vec<(String, String, String)> {
+        // Returns Vec<(name, path, status)>
+        let mut projects = Vec::new();
+        let mut current_name = String::new();
+        let mut current_path = String::new();
+        let mut current_status = String::new();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some(v) = trimmed.strip_prefix("- name:") {
+                if !current_name.is_empty() {
+                    projects.push((current_name.clone(), current_path.clone(), current_status.clone()));
+                }
+                current_name = v.trim().trim_matches('"').to_string();
+                current_path = String::new();
+                current_status = String::new();
+            } else if let Some(v) = trimmed.strip_prefix("path:") {
+                current_path = v.trim().trim_matches('"').to_string();
+            } else if let Some(v) = trimmed.strip_prefix("status:") {
+                current_status = v.trim().trim_matches('"').to_string();
+            }
+        }
+        if !current_name.is_empty() {
+            projects.push((current_name, current_path, current_status));
+        }
+        projects
+    }
+
+    // Expand ~ in path
+    fn expand_path(path: &str) -> std::path::PathBuf {
+        if let Some(rest) = path.strip_prefix("~/") {
+            if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
+                return home.join(rest);
+            }
+        }
+        std::path::PathBuf::from(path)
+    }
+
+    // Find project-map.yaml
+    let project_map_path = expand_path("~/coding-projects/project-map.yaml");
+    let project_map_content = match std::fs::read_to_string(&project_map_path) {
+        Ok(c) => c,
+        Err(_) => {
+            return Json(serde_json::json!({
+                "projects": [],
+                "tasks": [],
+                "error": "project-map.yaml not found"
+            })).into_response();
+        }
+    };
+
+    let projects = parse_project_map(&project_map_content);
+    let mut all_tasks: Vec<serde_json::Value> = Vec::new();
+    let mut project_summaries: Vec<serde_json::Value> = Vec::new();
+
+    for (name, path, status) in &projects {
+        let project_path = expand_path(path);
+        let changes_dir = project_path.join("openspec").join("changes");
+        let archive_dir = changes_dir.join("archive");
+
+        project_summaries.push(serde_json::json!({
+            "name": name,
+            "path": path,
+            "status": status,
+        }));
+
+        // Active changes (non-archive)
+        if let Ok(entries) = std::fs::read_dir(&changes_dir) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if !entry_path.is_dir() { continue; }
+                let change_id = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                if change_id == "archive" { continue; }
+
+                let tasks_path = entry_path.join("tasks.md");
+                if let Ok(content) = std::fs::read_to_string(&tasks_path) {
+                    let tasks = parse_tasks_table(&content, name, &change_id, false);
+                    all_tasks.extend(tasks);
+                }
+            }
+        }
+
+        // Archived changes
+        if let Ok(entries) = std::fs::read_dir(&archive_dir) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if !entry_path.is_dir() { continue; }
+                let change_id = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+
+                let tasks_path = entry_path.join("tasks.md");
+                if let Ok(content) = std::fs::read_to_string(&tasks_path) {
+                    let tasks = parse_tasks_table(&content, name, &change_id, true);
+                    all_tasks.extend(tasks);
+                }
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "projects": project_summaries,
+        "tasks": all_tasks,
+    })).into_response()
 }
 
 /// GET /api/integrations — list all integrations with status

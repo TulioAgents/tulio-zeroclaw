@@ -15,6 +15,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.tools': 'Tools',
     'nav.cron': 'Scheduled Jobs',
     'nav.agents': 'Agents',
+    'nav.kanban': 'Kanban',
     'nav.integrations': 'Integrations',
     'nav.memory': 'Memory',
     'nav.config': 'Configuration',
@@ -75,6 +76,19 @@ const translations: Record<Locale, Record<string, string>> = {
     'cron.enabled': 'Enabled',
     'cron.empty': 'No scheduled jobs.',
     'cron.confirm_delete': 'Are you sure you want to delete this job?',
+
+    // Kanban
+    'kanban.title': 'Kanban Board',
+    'kanban.todo': 'To Do',
+    'kanban.in_progress': 'In Progress',
+    'kanban.done': 'Done',
+    'kanban.empty': 'No tasks found.',
+    'kanban.all_projects': 'All Projects',
+    'kanban.all_agents': 'All Agents',
+    'kanban.live': 'Live',
+    'kanban.idle': 'Idle',
+    'kanban.archived': 'Archived',
+    'kanban.active_only': 'Active only',
 
     // Agents
     'agents.title': 'Agents',
@@ -210,6 +224,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'nav.tools': 'Araclar',
     'nav.cron': 'Zamanlanmis Gorevler',
     'nav.agents': 'Ajanlar',
+    'nav.kanban': 'Kanban',
     'nav.integrations': 'Entegrasyonlar',
     'nav.memory': 'Hafiza',
     'nav.config': 'Yapilandirma',
@@ -270,6 +285,19 @@ const translations: Record<Locale, Record<string, string>> = {
     'cron.enabled': 'Etkin',
     'cron.empty': 'Zamanlanmis gorev yok.',
     'cron.confirm_delete': 'Bu gorevi silmek istediginizden emin misiniz?',
+
+    // Kanban
+    'kanban.title': 'Kanban Panosu',
+    'kanban.todo': 'Yapilacak',
+    'kanban.in_progress': 'Devam Ediyor',
+    'kanban.done': 'Tamamlandi',
+    'kanban.empty': 'Gorev bulunamadi.',
+    'kanban.all_projects': 'Tum Projeler',
+    'kanban.all_agents': 'Tum Ajanlar',
+    'kanban.live': 'Aktif',
+    'kanban.idle': 'Bosta',
+    'kanban.archived': 'Arsivlendi',
+    'kanban.active_only': 'Sadece aktif',
 
     // Agents
     'agents.title': 'Ajanlar',

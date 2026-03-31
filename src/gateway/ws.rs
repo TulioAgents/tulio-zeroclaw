@@ -28,6 +28,10 @@ const WS_PROTOCOL: &str = "zeroclaw.v1";
 pub struct WsQuery {
     pub token: Option<String>,
     pub session_id: Option<String>,
+    /// Optional delegate agent ID (key in `[agents.*]` config section).
+    /// When set, the WebSocket session uses that agent's provider, model,
+    /// and system prompt instead of the gateway defaults.
+    pub agent_id: Option<String>,
 }
 
 /// GET /ws/chat — WebSocket upgrade for agent chat
@@ -62,12 +66,109 @@ pub async fn handle_ws_chat(
     };
 
     let session_id = params.session_id.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id))
+    let agent_id = params.agent_id.clone();
+    ws.on_upgrade(move |socket| handle_socket(socket, state, session_id, agent_id))
         .into_response()
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState, _session_id: Option<String>) {
+async fn handle_socket(
+    socket: WebSocket,
+    state: AppState,
+    _session_id: Option<String>,
+    agent_id: Option<String>,
+) {
     let (mut sender, mut receiver) = socket.split();
+
+    // Resolve delegate agent config once, before the message loop.
+    // If agent_id is given but unknown, close immediately with an error.
+    struct AgentCtx {
+        provider: std::sync::Arc<dyn crate::providers::Provider>,
+        model: String,
+        temperature: f64,
+        system_prompt: String,
+        provider_label: String,
+    }
+
+    let agent_ctx: AgentCtx = if let Some(ref id) = agent_id {
+        let delegate_opt = {
+            let cfg = state.config.lock();
+            cfg.agents.get(id).cloned()
+        };
+        let delegate = match delegate_opt {
+            Some(a) => a,
+            None => {
+                let err = serde_json::json!({
+                    "type": "error",
+                    "message": format!("Agent '{id}' not found in configuration")
+                });
+                let _ = sender.send(Message::Text(err.to_string().into())).await;
+                return;
+            }
+        };
+
+        let mut provider_name = delegate.provider.clone();
+        let mut model = delegate.model.clone();
+        let temperature = delegate.temperature.unwrap_or(state.temperature);
+        let system_prompt = delegate.system_prompt.clone().unwrap_or_default();
+        let api_key = delegate.api_key.clone();
+
+        // Resolve hint:* model aliases via [[model_routes]]
+        if let Some(hint) = model.strip_prefix("hint:") {
+            let cfg = state.config.lock();
+            if let Some(route) = cfg.model_routes.iter().find(|r| r.hint == hint) {
+                provider_name = route.provider.clone();
+                model = route.model.clone();
+            }
+        }
+
+        let provider = match crate::providers::create_provider(
+            &provider_name,
+            api_key.as_deref(),
+        ) {
+            Ok(p) => std::sync::Arc::from(p),
+            Err(e) => {
+                let err = serde_json::json!({
+                    "type": "error",
+                    "message": format!("Failed to create provider for agent '{id}': {e}")
+                });
+                let _ = sender.send(Message::Text(err.to_string().into())).await;
+                return;
+            }
+        };
+
+        AgentCtx {
+            provider,
+            model,
+            temperature,
+            system_prompt,
+            provider_label: provider_name,
+        }
+    } else {
+        // Default gateway agent
+        let (provider_label, system_prompt) = {
+            let config_guard = state.config.lock();
+            let label = config_guard
+                .default_provider
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            let prompt = crate::channels::build_system_prompt(
+                &config_guard.workspace_dir,
+                &state.model,
+                &[],
+                &[],
+                Some(&config_guard.identity),
+                None,
+            );
+            (label, prompt)
+        };
+        AgentCtx {
+            provider: state.provider.clone(),
+            model: state.model.clone(),
+            temperature: state.temperature,
+            system_prompt,
+            provider_label,
+        }
+    };
 
     while let Some(msg) = receiver.next().await {
         let msg = match msg {
@@ -96,36 +197,15 @@ async fn handle_socket(socket: WebSocket, state: AppState, _session_id: Option<S
             continue;
         }
 
-        // Process message with the LLM provider
-        let provider_label = state
-            .config
-            .lock()
-            .default_provider
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-
         // Broadcast agent_start event
         let _ = state.event_tx.send(serde_json::json!({
             "type": "agent_start",
-            "provider": provider_label,
-            "model": state.model,
+            "provider": agent_ctx.provider_label,
+            "model": agent_ctx.model,
         }));
 
-        // Simple single-turn chat (no streaming for now — use provider.chat_with_system)
-        let system_prompt = {
-            let config_guard = state.config.lock();
-            crate::channels::build_system_prompt(
-                &config_guard.workspace_dir,
-                &state.model,
-                &[],
-                &[],
-                Some(&config_guard.identity),
-                None,
-            )
-        };
-
         let messages = vec![
-            crate::providers::ChatMessage::system(system_prompt),
+            crate::providers::ChatMessage::system(&agent_ctx.system_prompt),
             crate::providers::ChatMessage::user(&content),
         ];
 
@@ -145,24 +225,22 @@ async fn handle_socket(socket: WebSocket, state: AppState, _session_id: Option<S
                 }
             };
 
-        match state
+        match agent_ctx
             .provider
-            .chat_with_history(&prepared.messages, &state.model, state.temperature)
+            .chat_with_history(&prepared.messages, &agent_ctx.model, agent_ctx.temperature)
             .await
         {
             Ok(response) => {
-                // Send the full response as a done message
                 let done = serde_json::json!({
                     "type": "done",
                     "full_response": response,
                 });
                 let _ = sender.send(Message::Text(done.to_string().into())).await;
 
-                // Broadcast agent_end event
                 let _ = state.event_tx.send(serde_json::json!({
                     "type": "agent_end",
-                    "provider": provider_label,
-                    "model": state.model,
+                    "provider": agent_ctx.provider_label,
+                    "model": agent_ctx.model,
                 }));
             }
             Err(e) => {
@@ -173,7 +251,6 @@ async fn handle_socket(socket: WebSocket, state: AppState, _session_id: Option<S
                 });
                 let _ = sender.send(Message::Text(err.to_string().into())).await;
 
-                // Broadcast error event
                 let _ = state.event_tx.send(serde_json::json!({
                     "type": "error",
                     "component": "ws_chat",

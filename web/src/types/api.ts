@@ -42,8 +42,32 @@ export interface CronJob {
   enabled: boolean;
 }
 
+export interface KanbanTask {
+  id: string;
+  title: string;
+  owner: string;
+  agent_id: string;
+  status: 'todo' | 'in_progress' | 'done';
+  project: string;
+  change_id: string;
+  archived: boolean;
+}
+
+export interface KanbanProject {
+  name: string;
+  path: string;
+  status: string;
+}
+
+export interface KanbanBoard {
+  projects: KanbanProject[];
+  tasks: KanbanTask[];
+}
+
 export interface AgentEntry {
   id: string;
+  name: string | null;
+  emoji: string | null;
   provider: string;
   model: string;
   agentic: boolean;
@@ -114,4 +138,5 @@ export interface WsMessage {
   args?: any;
   output?: string;
   message?: string;
+  agent_id?: string;
 }

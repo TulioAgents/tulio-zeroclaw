@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useState, useEffect, createContext, useContext } from 'react';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
@@ -6,6 +6,7 @@ import AgentChat from './pages/AgentChat';
 import Tools from './pages/Tools';
 import Cron from './pages/Cron';
 import Agents from './pages/Agents';
+import KanbanBoard from './pages/KanbanBoard';
 import Integrations from './pages/Integrations';
 import Memory from './pages/Memory';
 import Config from './pages/Config';
@@ -80,6 +81,11 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
   );
 }
 
+function AgentChatRoute() {
+  const { agentId } = useParams<{ agentId: string }>();
+  return <AgentChat agentId={agentId} />;
+}
+
 function AppContent() {
   const { isAuthenticated, loading, pair, logout } = useAuth();
   const [locale, setLocaleState] = useState('tr');
@@ -116,9 +122,11 @@ function AppContent() {
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/agent" element={<AgentChat />} />
+          <Route path="/agent/:agentId" element={<AgentChatRoute />} />
           <Route path="/tools" element={<Tools />} />
           <Route path="/cron" element={<Cron />} />
           <Route path="/agents" element={<Agents />} />
+          <Route path="/kanban" element={<KanbanBoard />} />
           <Route path="/integrations" element={<Integrations />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/config" element={<Config />} />

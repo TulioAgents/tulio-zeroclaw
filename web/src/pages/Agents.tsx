@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Bot, Zap, Layers, Wrench, ChevronDown, ChevronUp } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Bot, Zap, Layers, Wrench, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
 import type { AgentEntry } from '@/types/api';
 import { getAgents } from '@/lib/api';
 
 function AgentCard({ agent }: { agent: AgentEntry }) {
   const [expanded, setExpanded] = useState(false);
+  const navigate = useNavigate();
+
+  const displayName = agent.name ?? agent.id;
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 hover:border-gray-700 transition-colors">
@@ -12,11 +16,15 @@ function AgentCard({ agent }: { agent: AgentEntry }) {
       <div className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="h-9 w-9 rounded-lg bg-blue-900/50 border border-blue-700/40 flex items-center justify-center flex-shrink-0">
-              <Bot className="h-4 w-4 text-blue-400" />
+            <div className="h-9 w-9 rounded-lg bg-blue-900/50 border border-blue-700/40 flex items-center justify-center flex-shrink-0 text-lg">
+              {agent.emoji ? (
+                <span>{agent.emoji}</span>
+              ) : (
+                <Bot className="h-4 w-4 text-blue-400" />
+              )}
             </div>
             <div className="min-w-0">
-              <h4 className="text-sm font-semibold text-white truncate">{agent.id}</h4>
+              <h4 className="text-sm font-semibold text-white truncate">{displayName}</h4>
               <p className="text-xs text-gray-500 mt-0.5">
                 {agent.provider} · {agent.model}
               </p>
@@ -62,6 +70,15 @@ function AgentCard({ agent }: { agent: AgentEntry }) {
             </div>
           )}
         </div>
+
+        {/* Chat button */}
+        <button
+          onClick={() => navigate(`/agent/${agent.id}`)}
+          className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-700/40 hover:border-blue-600 transition-colors"
+        >
+          <MessageSquare className="h-4 w-4" />
+          Chat with {displayName}
+        </button>
       </div>
 
       {/* Expanded tools section */}
