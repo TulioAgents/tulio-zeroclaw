@@ -55,6 +55,7 @@ mod rag {
 mod config;
 mod cost;
 mod cron;
+mod queue;
 mod daemon;
 mod doctor;
 mod gateway;
@@ -85,7 +86,7 @@ use config::Config;
 // Re-export so binary modules can use crate::<CommandEnum> while keeping a single source of truth.
 pub use zeroclaw::{
     ChannelCommands, CronCommands, GatewayCommands, HardwareCommands, IntegrationCommands,
-    MigrateCommands, PeripheralCommands, ServiceCommands, SkillCommands,
+    MigrateCommands, PeripheralCommands, QueueCommands, ServiceCommands, SkillCommands,
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -397,6 +398,25 @@ Examples:
     Peripheral {
         #[command(subcommand)]
         peripheral_command: zeroclaw::PeripheralCommands,
+    },
+
+    /// Manage per-agent task queues (list, drain, cancel, reset)
+    #[command(long_about = "\
+Manage the persistent task queue for each configured agent.
+
+Each agent has a SQLite-backed inbox that survives reboots.
+Tasks are enqueued via the REST API (POST /api/queue/<agent>)
+and drained by a cron job using 'zeroclaw queue drain <agent>'.
+
+Examples:
+  zeroclaw queue list manager
+  zeroclaw queue list manager --status pending
+  zeroclaw queue drain manager --limit 3
+  zeroclaw queue cancel manager <item-id>
+  zeroclaw queue reset all --stale-minutes 10")]
+    Queue {
+        #[command(subcommand)]
+        queue_command: QueueCommands,
     },
 
     /// Manage agent memory (list, get, stats, clear)
@@ -1155,6 +1175,10 @@ async fn main() -> Result<()> {
 
         Commands::Peripheral { peripheral_command } => {
             peripherals::handle_command(peripheral_command.clone(), &config).await
+        }
+
+        Commands::Queue { queue_command } => {
+            queue::handle_command(queue_command, &config).await
         }
 
         Commands::Config { config_command } => match config_command {

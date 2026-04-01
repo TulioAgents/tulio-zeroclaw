@@ -47,6 +47,7 @@ pub mod model_routing_config;
 pub mod pdf_read;
 pub mod proxy_config;
 pub mod pushover;
+pub mod queue_enqueue;
 pub mod schedule;
 pub mod schema;
 pub mod screenshot;
@@ -86,6 +87,7 @@ pub use model_routing_config::ModelRoutingConfigTool;
 pub use pdf_read::PdfReadTool;
 pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
+pub use queue_enqueue::QueueEnqueueTool;
 pub use schedule::ScheduleTool;
 #[allow(unused_imports)]
 pub use schema::{CleaningStrategy, SchemaCleanr};
@@ -238,6 +240,10 @@ pub fn all_tools_with_runtime(
         Arc::new(PushoverTool::new(
             security.clone(),
             workspace_dir.to_path_buf(),
+        )),
+        Arc::new(QueueEnqueueTool::new(
+            workspace_dir.to_path_buf(),
+            security.clone(),
         )),
     ];
 

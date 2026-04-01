@@ -45,6 +45,7 @@ pub mod channels;
 pub mod config;
 pub(crate) mod cost;
 pub(crate) mod cron;
+pub(crate) mod queue;
 pub(crate) mod daemon;
 pub(crate) mod doctor;
 pub mod gateway;
@@ -498,4 +499,40 @@ Examples:
     },
     /// Flash ZeroClaw firmware to Nucleo-F401RE (builds + probe-rs run)
     FlashNucleo,
+}
+
+/// Queue management subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum QueueCommands {
+    /// List queue items for an agent
+    List {
+        /// Agent name
+        agent: String,
+        /// Filter by status (pending, processing, done, failed)
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Drain the next pending item(s) from an agent's queue via the agent loop
+    Drain {
+        /// Agent name
+        agent: String,
+        /// Maximum number of items to drain in this run (default: 1)
+        #[arg(long, default_value = "1")]
+        limit: usize,
+    },
+    /// Cancel a pending queue item by id
+    Cancel {
+        /// Agent name
+        agent: String,
+        /// Item id
+        id: String,
+    },
+    /// Reset stale processing items back to pending (e.g. after reboot)
+    Reset {
+        /// Agent name (or "all")
+        agent: String,
+        /// Items stuck processing for this many minutes are reset (default: 10)
+        #[arg(long, default_value = "10")]
+        stale_minutes: i64,
+    },
 }

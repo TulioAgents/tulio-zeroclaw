@@ -82,6 +82,36 @@ pub fn bump_component_restart(component: &str) {
     });
 }
 
+// ── Per-agent activity tracking ──────────────────────────────────────────────
+
+/// Mark an agent as actively processing a queue item.
+pub fn mark_agent_active(agent: &str, item_id: &str) {
+    let component = format!("agent:{agent}");
+    upsert_component(&component, move |entry| {
+        entry.status = format!("active:{item_id}");
+        entry.last_ok = Some(now_rfc3339());
+        entry.last_error = None;
+    });
+}
+
+/// Mark an agent as idle after finishing a task.
+pub fn mark_agent_idle(agent: &str) {
+    let component = format!("agent:{agent}");
+    upsert_component(&component, |entry| {
+        entry.status = "idle".into();
+        entry.last_ok = Some(now_rfc3339());
+    });
+}
+
+/// Get agent status string: "idle", "active:<item_id>", "error", or "unknown".
+pub fn agent_status(agent: &str) -> String {
+    let component = format!("agent:{agent}");
+    let map = registry().components.lock();
+    map.get(&component)
+        .map(|e| e.status.clone())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 pub fn snapshot() -> HealthSnapshot {
     let components = registry().components.lock().clone();
 

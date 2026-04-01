@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
+use crate::queue;
 
 const MASKED_SECRET: &str = "***MASKED***";
 
@@ -358,6 +359,19 @@ pub async fn handle_api_agents(
                 .as_deref()
                 .map(parse_agent_frontmatter)
                 .unwrap_or((None, None));
+
+            // Activity status from health registry
+            let status = crate::health::agent_status(id);
+            let is_active = status.starts_with("active:");
+            let current_task_id = if is_active {
+                status.strip_prefix("active:").map(str::to_string)
+            } else {
+                None
+            };
+
+            // Queue depth from SQLite (best-effort, don't fail the whole response)
+            let queue_depth = queue::pending_count(&state.workspace_dir, id).unwrap_or(0);
+
             serde_json::json!({
                 "id": id,
                 "name": name,
@@ -370,6 +384,9 @@ pub async fn handle_api_agents(
                 "allowed_tools": agent.allowed_tools,
                 "workspace_dir": agent.workspace_dir.as_ref().map(|p| p.to_string_lossy()),
                 "has_system_prompt": agent.system_prompt.is_some(),
+                "status": if is_active { "active" } else if status == "unknown" { "idle" } else { &status },
+                "current_task_id": current_task_id,
+                "queue_depth": queue_depth,
             })
         })
         .collect();
@@ -546,20 +563,42 @@ pub async fn handle_api_kanban(
         std::path::PathBuf::from(path)
     }
 
-    // Find project-map.yaml
+    // Find project-map.yaml (optional — fall back to empty if missing)
     let project_map_path = expand_path("~/coding-projects/project-map.yaml");
-    let project_map_content = match std::fs::read_to_string(&project_map_path) {
-        Ok(c) => c,
-        Err(_) => {
-            return Json(serde_json::json!({
-                "projects": [],
-                "tasks": [],
-                "error": "project-map.yaml not found"
-            })).into_response();
-        }
-    };
+    let project_map_content = std::fs::read_to_string(&project_map_path).unwrap_or_default();
+    let registered = parse_project_map(&project_map_content);
 
-    let projects = parse_project_map(&project_map_content);
+    // Build a set of registered paths for dedup
+    let registered_paths: std::collections::HashSet<std::path::PathBuf> = registered
+        .iter()
+        .map(|(_, path, _)| expand_path(path))
+        .collect();
+
+    // Auto-discover any projects under ~/coding-projects/ that have openspec/changes/
+    // regardless of whether they are in project-map.yaml
+    let coding_root = expand_path("~/coding-projects");
+    let mut discovered: Vec<(String, String, String)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&coding_root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_dir() { continue; }
+            // skip hidden dirs and the __tests__ dir
+            let dirname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if dirname.starts_with('.') || dirname == "__tests__" { continue; }
+            if p.join("openspec").join("changes").is_dir() && !registered_paths.contains(&p) {
+                let name = dirname.to_string();
+                let path = format!("~/coding-projects/{name}");
+                discovered.push((name, path, "active".to_string()));
+            }
+        }
+    }
+
+    // Merge: registered first (preserves names/status), then auto-discovered
+    let projects: Vec<(String, String, String)> = registered
+        .into_iter()
+        .chain(discovered)
+        .collect();
+
     let mut all_tasks: Vec<serde_json::Value> = Vec::new();
     let mut project_summaries: Vec<serde_json::Value> = Vec::new();
 
@@ -1740,5 +1779,99 @@ mod tests {
             .embedding_routes
             .iter()
             .all(|route| route.api_key.as_deref() != Some(MASKED_SECRET)));
+    }
+}
+
+// ── Queue handlers ─────────────────────────────────────────────────────────
+// These live outside the #[cfg(test)] block above.
+
+#[derive(Deserialize)]
+pub struct QueueListQuery {
+    pub status: Option<String>,
+}
+
+/// GET /api/queue/{agent} — list queue items for an agent
+pub async fn handle_api_queue_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(agent): Path<String>,
+    Query(params): Query<QueueListQuery>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let status_filter = params.status.as_deref();
+    match queue::list(&state.workspace_dir, &agent, status_filter) {
+        Ok(items) => {
+            let count = items.len();
+            Json(serde_json::json!({
+                "agent": agent,
+                "items": items,
+                "count": count,
+            })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to list queue: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/queue/{agent} — enqueue a task for an agent
+pub async fn handle_api_queue_enqueue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(agent): Path<String>,
+    Json(body): Json<queue::EnqueueRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    // Validate agent exists in config
+    let config = state.config.lock().clone();
+    if !config.agents.contains_key(&agent) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("Agent '{agent}' not found in config")})),
+        )
+            .into_response();
+    }
+    drop(config);
+
+    match queue::enqueue(&state.workspace_dir, &agent, body) {
+        Ok(item) => (StatusCode::CREATED, Json(serde_json::json!(item))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to enqueue: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
+/// DELETE /api/queue/{agent}/{id} — cancel a pending queue item
+pub async fn handle_api_queue_cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((agent, id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    match queue::cancel(&state.workspace_dir, &id) {
+        Ok(()) => Json(serde_json::json!({
+            "cancelled": true,
+            "id": id,
+            "agent": agent,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("{e}")})),
+        )
+            .into_response(),
     }
 }

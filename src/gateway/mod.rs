@@ -312,6 +312,8 @@ pub struct AppState {
     pub event_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
     /// Shutdown signal sender for graceful shutdown
     pub shutdown_tx: tokio::sync::watch::Sender<bool>,
+    /// Workspace directory, used by queue store to locate items.db
+    pub workspace_dir: std::path::PathBuf,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -653,6 +655,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         cost_tracker,
         event_tx,
         shutdown_tx,
+        workspace_dir: config.workspace_dir.clone(),
     };
 
     // Config PUT needs larger body limit (1MB)
@@ -685,6 +688,9 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/cron", post(api::handle_api_cron_add))
         .route("/api/cron/{id}", delete(api::handle_api_cron_delete))
         .route("/api/agents", get(api::handle_api_agents))
+        .route("/api/queue/{agent}", get(api::handle_api_queue_list))
+        .route("/api/queue/{agent}", post(api::handle_api_queue_enqueue))
+        .route("/api/queue/{agent}/{id}", delete(api::handle_api_queue_cancel))
         .route("/api/kanban", get(api::handle_api_kanban))
         .route("/api/integrations", get(api::handle_api_integrations))
         .route(
