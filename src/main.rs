@@ -77,6 +77,7 @@ mod security;
 mod service;
 mod skillforge;
 mod skills;
+mod task;
 mod tools;
 mod tunnel;
 mod util;
@@ -87,6 +88,7 @@ use config::Config;
 pub use zeroclaw::{
     ChannelCommands, CronCommands, GatewayCommands, HardwareCommands, IntegrationCommands,
     MigrateCommands, PeripheralCommands, QueueCommands, ServiceCommands, SkillCommands,
+    TaskCommands,
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -417,6 +419,21 @@ Examples:
     Queue {
         #[command(subcommand)]
         queue_command: QueueCommands,
+    },
+
+    /// Track task progress from tasks.md, cross-referenced with the queue DB
+    #[command(long_about = "\
+Track task progress for a project change.
+
+Reads tasks.md from the project's openspec/changes/ directory and \
+cross-references each task ID against the queue DB to surface drift.
+
+Examples:
+  zeroclaw task status --project helloworld3 --change hw3-001
+  zeroclaw task status --project helloworld3 --change hw3-001 --sync")]
+    Task {
+        #[command(subcommand)]
+        task_command: TaskCommands,
     },
 
     /// Manage agent memory (list, get, stats, clear)
@@ -1179,6 +1196,10 @@ async fn main() -> Result<()> {
 
         Commands::Queue { queue_command } => {
             queue::handle_command(queue_command, &config).await
+        }
+
+        Commands::Task { task_command } => {
+            task::handle_command(task_command, &config).await
         }
 
         Commands::Config { config_command } => match config_command {

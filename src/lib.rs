@@ -46,6 +46,7 @@ pub mod config;
 pub(crate) mod cost;
 pub(crate) mod cron;
 pub(crate) mod queue;
+pub(crate) mod task;
 pub(crate) mod daemon;
 pub(crate) mod doctor;
 pub mod gateway;
@@ -499,6 +500,35 @@ Examples:
     },
     /// Flash ZeroClaw firmware to Nucleo-F401RE (builds + probe-rs run)
     FlashNucleo,
+}
+
+/// Task tracking subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TaskCommands {
+    /// Show task status from tasks.md, cross-referenced with the queue DB
+    #[command(long_about = "\
+Show task status for a project change.
+
+Reads <project>/openspec/changes/<change>/tasks.md, queries the queue DB \
+for items whose context contains the matching task_id, and reports any \
+rows where the Markdown status disagrees with queue reality (drift).
+
+With --sync, patches tasks.md in place to align the Status column with the queue.
+
+Examples:
+  zeroclaw task status --project helloworld3 --change hw3-001
+  zeroclaw task status --project helloworld3 --change hw3-001 --sync")]
+    Status {
+        /// Project code (e.g. helloworld3)
+        #[arg(long)]
+        project: String,
+        /// Change folder name under openspec/changes/ (e.g. hw3-001)
+        #[arg(long)]
+        change: String,
+        /// Patch tasks.md to align Status column with queue DB (queue is truth)
+        #[arg(long)]
+        sync: bool,
+    },
 }
 
 /// Queue management subcommands

@@ -331,7 +331,7 @@ export default function KanbanBoard() {
         {/* Project filter */}
         <div className="flex flex-wrap gap-1.5 items-center">
           <FolderOpen className="h-3.5 w-3.5 text-gray-500" />
-          {['all', ...projects.map((p) => p.name)].map((p) => (
+          {['all', ...projects.filter((p) => p.status !== 'closed').map((p) => p.name)].map((p) => (
             <button
               key={p}
               onClick={() => setFilterProject(p)}

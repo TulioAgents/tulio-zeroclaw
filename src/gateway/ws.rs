@@ -206,32 +206,18 @@ async fn handle_socket(
             "model": agent_ctx.model,
         }));
 
-        let messages = vec![
-            crate::providers::ChatMessage::system(&agent_ctx.system_prompt),
-            crate::providers::ChatMessage::user(&content),
-        ];
+        // Build an agent config scoped to this agent (or the default gateway config)
+        // and run the full agentic tool loop via process_message.
+        let agent_config = {
+            let mut cfg = state.config.lock().clone();
+            // Override provider/model/system_prompt with the resolved agent context
+            cfg.default_provider = Some(agent_ctx.provider_label.clone());
+            cfg.default_model = Some(agent_ctx.model.clone());
+            cfg.default_temperature = agent_ctx.temperature;
+            cfg
+        };
 
-        let multimodal_config = state.config.lock().multimodal.clone();
-        let prepared =
-            match crate::multimodal::prepare_messages_for_provider(&messages, &multimodal_config)
-                .await
-            {
-                Ok(p) => p,
-                Err(e) => {
-                    let err = serde_json::json!({
-                        "type": "error",
-                        "message": format!("Multimodal prep failed: {e}")
-                    });
-                    let _ = sender.send(Message::Text(err.to_string().into())).await;
-                    continue;
-                }
-            };
-
-        match agent_ctx
-            .provider
-            .chat_with_history(&prepared.messages, &agent_ctx.model, agent_ctx.temperature)
-            .await
-        {
+        match crate::agent::process_message(agent_config, &content).await {
             Ok(response) => {
                 let done = serde_json::json!({
                     "type": "done",

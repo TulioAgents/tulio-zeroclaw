@@ -613,6 +613,12 @@ pub async fn handle_api_kanban(
             "status": status,
         }));
 
+        // Closed projects are listed in the project summary but their tasks
+        // are not surfaced on the Kanban board.
+        if status.eq_ignore_ascii_case("closed") {
+            continue;
+        }
+
         // Active changes (non-archive)
         if let Ok(entries) = std::fs::read_dir(&changes_dir) {
             for entry in entries.flatten() {

@@ -291,6 +291,44 @@ pub fn cancel(workspace_dir: &Path, id: &str) -> Result<()> {
     })
 }
 
+/// Return all queue items whose context contains `project: <project>`.
+/// If `task_id` is Some, further filters to items whose context also contains
+/// `task_id: <task_id>` as an exact line.
+/// Ordered by created_at DESC (newest attempt first).
+pub fn query_by_project(
+    workspace_dir: &Path,
+    project: &str,
+    task_id: Option<&str>,
+) -> Result<Vec<QueueItem>> {
+    let project_needle = format!("project: {project}");
+    with_connection(workspace_dir, |conn| {
+        let items = if let Some(tid) = task_id {
+            let task_needle = format!("task_id: {tid}");
+            let mut stmt = conn.prepare(
+                "SELECT id, agent, task, context, from_agent, priority, status,
+                        created_at, started_at, finished_at, result, error
+                 FROM queue_items
+                 WHERE instr(coalesce(context,''), ?1) > 0
+                   AND instr(coalesce(context,''), ?2) > 0
+                 ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map(params![project_needle, task_needle], map_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, agent, task, context, from_agent, priority, status,
+                        created_at, started_at, finished_at, result, error
+                 FROM queue_items
+                 WHERE instr(coalesce(context,''), ?1) > 0
+                 ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map(params![project_needle], map_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        Ok(items)
+    })
+}
+
 // ── CLI handler ──────────────────────────────────────────────────────────────
 
 pub async fn handle_command(
@@ -427,13 +465,42 @@ fn build_drain_prompt(agent: &str, item: &QueueItem) -> String {
         prompt.push_str("\nContext:\n");
         prompt.push_str(ctx);
         prompt.push('\n');
+
+        // Extract task_id and project from the context block.
+        // Convention: `task_id: hw3-003` and `project: helloworld3` as bare lines.
+        let task_id_in_ctx = ctx
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("task_id: "))
+            .map(str::trim);
+        let project_in_ctx = ctx
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("project: "))
+            .map(str::trim);
+
+        // Inject a TASK GUARD when both are present so the agent knows:
+        // 1) which tasks.md row it owns
+        // 2) to use its OWN task_id in queue_enqueue, not the queue item id
+        if let (Some(tid), Some(proj)) = (task_id_in_ctx, project_in_ctx) {
+            prompt.push_str(&format!(
+                "\n[TASK GUARD]\n\
+                 You are responsible for task `{tid}` in project `{proj}`.\n\
+                 - In tasks.md, update ONLY the row with ID `{tid}` (set Status to \
+                   `in-progress` when you start, `done` when you finish).\n\
+                 - When calling queue_enqueue to hand off to the next agent, set \
+                   `task_id` to the NEXT agent's task row ID from tasks.md — NOT \
+                   this queue item id `{}`.\n\
+                 - tasks.md is at: \
+                   ~/coding-projects/{proj}/openspec/changes/<change-id>/tasks.md\n\
+                 - Read tasks.md first to confirm your task is not already `done`. \
+                   If it is, output: SKIP: task {tid} already done — and stop.\n",
+                item.id
+            ));
+        }
     }
     if let Some(from) = &item.from_agent {
         prompt.push_str(&format!("\nRequested by: {from}\n"));
     }
-    prompt.push_str(
-        "\nComplete the task above. Be thorough but concise in your response.",
-    );
+    prompt.push_str("\nComplete the task above. Be thorough but concise in your response.");
     prompt
 }
 
